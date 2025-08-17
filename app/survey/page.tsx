@@ -12,7 +12,6 @@ import { Label } from "@/components/ui/label"
 import { cn } from "@/lib/utils"
 import { getParticipant, saveAnswer, getAnswers } from "@/lib/client-store"
 import { getBeginnerQuestions, getAdvancedQuestions, type Question } from "@/lib/survey-data"
-import { submitSurveyData } from "@/lib/survey-api"
 
 export default function SurveyPage() {
   const router = useRouter()
@@ -24,84 +23,85 @@ export default function SurveyPage() {
   const [isSubmitting, setIsSubmitting] = useState(false)
 
   useEffect(() => {
-    const p = getParticipant()
-    if (!p) {
-      router.replace("/")
-      return
+    const init = async () => {
+      const participantData = await getParticipant()
+      setParticipantData(participantData)
+      const questionsData = await getBeginnerQuestions()
+      setQuestions(questionsData)
+      setReady(true)
     }
-    setParticipantData(p)
-    const list = ["Expert", "Pro"].includes(p.skillLevel ?? "") ? getAdvancedQuestions() : getBeginnerQuestions()
-    setQuestions(list)
-    setAnswers(getAnswers())
-    setReady(true)
-  }, [router])
+    init()
+  }, [])
 
-  const current = questions[index]
-  const total = questions.length
-  const isLastQuestion = index + 1 >= total
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setIsSubmitting(true);
+    const completedAt = new Date().toISOString();
 
-  function onPrev() {
-    if (index === 0) {
-      router.back()
-      return
-    }
-    setIndex((i) => Math.max(0, i - 1))
-  }
-
-  async function onNext() {
-    if (!current) return
-    const val = answers[current.id]
-
-    // Validate answer exists
-    if (!val || (Array.isArray(val) && val.length === 0) || (typeof val === "string" && !val.trim())) {
-      return
-    }
-
-    if (isLastQuestion) {
-      setIsSubmitting(true)
-      try {
-        // Submit all data to database
-        await submitSurveyData({
-          participant,
-          answers,
-          completedAt: new Date().toISOString(),
-        })
-        router.push("/thank-you")
-      } catch (error) {
-        console.error("Failed to submit survey:", error)
-        // Still proceed to thank you page even if submission fails
-        router.push("/thank-you")
-      } finally {
-        setIsSubmitting(false)
+    try {
+      const response = await fetch('/api/submit-survey', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ participant, answers, completedAt }),
+      });
+      const result = await response.json();
+      if (result.success) {
+        router.push('/thank-you');
+      } else {
+        console.error('Submission failed:', result.error);
       }
-    } else {
-      setIndex((i) => i + 1)
+    } catch (error) {
+      console.error('Error submitting survey:', error);
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  // Example navigation logic (adjust based on your actual implementation)
+  const handleNext = () => {
+    if (index < questions.length - 1) setIndex(index + 1);
+  };
+
+  const handlePrevious = () => {
+    if (index > 0) setIndex(index - 1);
+  };
+
+  // Helper variables and handlers
+  const total = questions.length;
+  const current = questions[index];
+  const isLastQuestion = index === total - 1;
+
+  // Helper for setting answers
+  function setAnswer(value: string | string[]) {
+    setAnswers((prev) => ({
+      ...prev,
+      [current.id]: value,
+    }));
+  }
+
+  // Helper for multiple choice toggle
+  function toggleMultipleChoice(opt: string) {
+    setAnswers((prev) => {
+      const prevArr = (prev[current.id] as string[]) || [];
+      if (prevArr.includes(opt)) {
+        return { ...prev, [current.id]: prevArr.filter((o) => o !== opt) };
+      } else {
+        return { ...prev, [current.id]: [...prevArr, opt] };
+      }
+    });
+  }
+
+  // Navigation handlers
+  function onPrev() {
+    if (index > 0) setIndex(index - 1);
+  }
+  function onNext() {
+    if (isLastQuestion) {
+      handleSubmit(new Event("submit") as any);
+    } else if (index < total - 1) {
+      setIndex(index + 1);
     }
   }
-
-  function setAnswer(val: string | string[]) {
-    if (!current) return
-    const next = { ...answers, [current.id]: val }
-    setAnswers(next)
-    saveAnswer(current.id, val)
-  }
-
-  function toggleMultipleChoice(option: string) {
-    if (!current) return
-    const currentAnswers = (answers[current.id] as string[]) || []
-    const isSelected = currentAnswers.includes(option)
-
-    let newAnswers: string[]
-    if (isSelected) {
-      newAnswers = currentAnswers.filter((a) => a !== option)
-    } else {
-      newAnswers = [...currentAnswers, option]
-    }
-
-    setAnswer(newAnswers)
-  }
-
-  if (!ready) return null
 
   return (
     <main className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-indigo-50">
@@ -113,6 +113,7 @@ export default function SurveyPage() {
               <button
                 onClick={onPrev}
                 className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors"
+                disabled={index === 0}
               >
                 <ArrowLeft className="h-4 w-4" />
                 Previous
@@ -202,7 +203,7 @@ export default function SurveyPage() {
         </div>
       </div>
     </main>
-  )
+  );
 }
 
 function Stepper({ total, currentIndex }: { total: number; currentIndex: number }) {
